@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: orders_src
+    database: GLUE_DATA
+    schema: ORDERS
+    tables:
+      - name: ORDERS
+      - name: ORDER_ITEMS
+      - name: CUSTOMERS
+      - name: PRODUCTS
+      - name: CATEGORIES
+      - name: DEPARTMENTS

@@ -1,1 +1,6 @@
 .venv
+uv.lock
+target/
+dbt_packages/
+.vscode/
+logs/
