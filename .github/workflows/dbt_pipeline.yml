@@ -1,9 +1,7 @@
 name: dbt Daily Pipeline
 
 on:
-  schedule:
-    - cron: '0 2 * * *'   # runs every day at 2:00 AM UTC (7:30 AM IST)
-  workflow_dispatch:        # allows manual trigger from GitHub UI
+  workflow_dispatch:        # manual trigger only — run from GitHub Actions UI
 
 jobs:
   dbt_pipeline:
