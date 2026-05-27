@@ -1,11 +1,107 @@
-name: dbt Daily Pipeline
+name: dbt Snowflake Pipeline
 
 on:
-  workflow_dispatch:        # manual trigger only — run from GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Select action to run'
+        required: true
+        type: choice
+        options:
+          - deploy-infrastructure
+          - build-and-push-image
+          - run-dbt-pipeline
 
 jobs:
-  dbt_pipeline:
+  # ── Job 1: Deploy CDK Infrastructure ───────────────────────────────
+  deploy_infrastructure:
+    name: Deploy AWS Infrastructure (CDK)
     runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'deploy-infrastructure'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up Node.js (required for CDK CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install CDK dependencies
+        run: uv sync
+        working-directory: infrastructure
+
+      - name: CDK Bootstrap
+        run: uv run cdk bootstrap
+        working-directory: infrastructure
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+
+      - name: CDK Deploy all stacks
+        run: uv run cdk deploy --all --require-approval never
+        working-directory: infrastructure
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+
+  # ── Job 2: Build Docker image and push to ECR ──────────────────────
+  build_and_push:
+    name: Build and Push Docker Image to ECR
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'build-and-push-image'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: dbt-snowflake
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+
+  # ── Job 3: Run dbt pipeline directly ───────────────────────────────
+  dbt_pipeline:
+    name: Run dbt Pipeline
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'run-dbt-pipeline'
 
     steps:
       - name: Checkout repository
@@ -21,7 +117,6 @@ jobs:
 
       - name: Install Python dependencies
         run: uv sync
-        working-directory: .
 
       - name: Create dbt profiles.yml
         run: |
