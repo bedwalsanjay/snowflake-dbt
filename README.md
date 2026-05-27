@@ -158,10 +158,30 @@ A production-grade retail analytics pipeline built on AWS S3 + Snowflake + dbt. 
 │       ├── snap_categories.sql
 │       ├── snap_departments.sql
 │       └── snapshots.yml
+├── infrastructure/                   # AWS CDK infrastructure as code
+│   ├── app.py                        # CDK entry point
+│   ├── cdk.json                      # CDK config (uses uv run)
+│   ├── pyproject.toml                # CDK Python dependencies
+│   ├── uv.lock
+│   └── stacks/
+│       ├── ecr_stack.py              # ECR repository
+│       └── ecs_stack.py              # ECS cluster + Fargate task definition
+├── airflow/
+│   └── dags/
+│       └── dbt_snowflake_pipeline.py # Airflow DAG (ECSOperator)
+├── airflow_setup_files/
+│   ├── airflow_in_ec2.md             # Step-by-step EC2 Airflow setup guide
+│   └── setup_airflow.sh              # Automated EC2 setup script
+├── .github/
+│   └── workflows/
+│       └── dbt_pipeline.yml          # CI/CD pipeline (4 jobs)
 ├── sample_data/
 │   ├── retail_db/                    # CSV files
 │   └── retail_db_json/               # JSON-style files
 ├── src/sqls/                         # Snowflake setup SQL scripts
+├── Dockerfile                        # dbt Docker image
+├── entrypoint.sh                     # Container startup script
+├── deployment-checklist.md           # Pre-deployment checklist for all CI/CD jobs
 ├── main.py
 ├── pyproject.toml
 └── uv.lock
@@ -387,3 +407,130 @@ Upload CSV files to that path, or update `src/sqls/stage_fileFormats.sql` to poi
 - `target/`, `dbt_packages/`, and `logs/` are git-ignored.
 - `.venv/`, `.vscode/`, and `uv.lock` are git-ignored.
 - Do not commit `profiles.yml` or any file containing credentials.
+
+---
+
+## Orchestration — Airflow + ECS Fargate
+
+The pipeline is orchestrated using Apache Airflow running on EC2, with each dbt step executed as an isolated AWS ECS Fargate container.
+
+### Architecture
+
+```text
+GitHub Actions (CI/CD)
+        │
+        ├── deploy-infrastructure → CDK deploys ECR + ECS to AWS
+        ├── build-and-push-image  → Docker image built and pushed to ECR
+        ├── deploy-dags           → DAG files synced to S3
+        └── run-dbt-pipeline      → dbt runs directly on GitHub runner (fallback)
+
+EC2 (Airflow via Docker)
+        │  cron: every 5 mins
+        ├── aws s3 sync s3://<dags-bucket>/dags/ ~/airflow/dags/
+        │
+        └── Airflow DAG: dbt_snowflake_pipeline
+                │
+                ├── run_staging     → ECS Fargate → dbt run --select staging
+                ├── run_snapshots   → ECS Fargate → dbt snapshot
+                ├── run_dimensions  → ECS Fargate → dbt run --select marts.dimensions
+                ├── run_facts       → ECS Fargate → dbt run --select marts.facts
+                └── run_tests       → ECS Fargate → dbt test
+```
+
+### How It Works
+
+1. Each Airflow task spins up a **fresh Fargate container** from the ECR image
+2. Snowflake credentials are injected as environment variables at runtime — never stored in the image
+3. The container runs the dbt command via `entrypoint.sh`, which writes `profiles.yml` from env vars
+4. Container exits after the dbt command completes — you only pay for the runtime (~2-3 mins per task)
+5. dbt logs are available in **CloudWatch → Log groups → `/ecs/dbt-snowflake`**
+
+### Infrastructure (CDK)
+
+All AWS resources are defined as code in `infrastructure/`:
+
+| Resource | Details |
+|---|---|
+| ECR Repository | `dbt-snowflake` — stores Docker images, keeps last 5 |
+| ECS Cluster | `dbt-snowflake-cluster` — Fargate, uses default VPC |
+| Task Definition | `dbt-snowflake-task` — 0.5 vCPU, 1 GB RAM |
+| ECS Execution Role | `dbt-ecs-execution-role` — pulls image from ECR |
+| ECS Task Role | `dbt-ecs-task-role` — S3 read access at runtime |
+| CloudWatch Log Group | `/ecs/dbt-snowflake` — 1 week retention |
+
+Deploy infrastructure:
+```bash
+cd infrastructure
+uv sync
+uv run cdk bootstrap   # one-time per AWS account/region
+uv run cdk deploy --all
+```
+
+### DAG Deployment Flow
+
+DAG files live in `airflow/dags/` in this repo. Deployment is fully automated:
+
+1. Push DAG changes to `main`
+2. Trigger `deploy-dags` from GitHub Actions → files uploaded to S3
+3. EC2 cron job syncs from S3 every 5 minutes → DAGs appear in Airflow UI automatically
+
+No SSH access to EC2 required for DAG updates.
+
+### EC2 Cron Setup (one-time)
+
+```bash
+# Install cron if not present
+sudo yum install cronie -y
+sudo systemctl start crond
+sudo systemctl enable crond
+
+# Add S3 sync cron job (replace bucket name with your own)
+(crontab -l 2>/dev/null; echo "*/5 * * * * aws s3 sync s3://<your-dags-bucket>/dags/ ~/airflow/dags/ --delete --exclude '*.pyc' >> ~/airflow/logs/s3_sync.log 2>&1") | crontab -
+
+# Verify
+crontab -l
+```
+
+### Airflow Variables Required
+
+Add these in Airflow UI → **Admin → Variables**:
+
+| Key | Description |
+|---|---|
+| `AWS_REGION` | AWS region e.g. `ap-south-1` |
+| `ECS_CLUSTER` | `dbt-snowflake-cluster` |
+| `ECS_TASK_DEFINITION` | `dbt-snowflake-task` |
+| `ECS_CONTAINER_NAME` | `dbt-snowflake` |
+| `ECS_SUBNET_ID` | Public subnet ID from your VPC |
+| `ECS_SECURITY_GROUP_ID` | Security group ID from your VPC |
+| `SNOWFLAKE_ACCOUNT` | Snowflake account identifier |
+| `SNOWFLAKE_USER` | Snowflake username |
+| `SNOWFLAKE_PASSWORD` | Snowflake password |
+| `SNOWFLAKE_ROLE` | Snowflake role |
+| `SNOWFLAKE_WAREHOUSE` | Snowflake warehouse |
+
+### GitHub Secrets Required
+
+| Secret | Used By |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | CDK deploy, ECR push, S3 DAG sync |
+| `AWS_SECRET_ACCESS_KEY` | CDK deploy, ECR push, S3 DAG sync |
+| `AWS_REGION` | CDK deploy, ECR push, S3 DAG sync |
+| `AWS_ACCOUNT_ID` | CDK bootstrap (VPC lookup) |
+| `AIRFLOW_DAGS_BUCKET` | S3 DAG sync bucket name |
+| `SNOWFLAKE_ACCOUNT` | dbt pipeline (direct runner) |
+| `SNOWFLAKE_USER` | dbt pipeline (direct runner) |
+| `SNOWFLAKE_PASSWORD` | dbt pipeline (direct runner) |
+| `SNOWFLAKE_ROLE` | dbt pipeline (direct runner) |
+| `SNOWFLAKE_WAREHOUSE` | dbt pipeline (direct runner) |
+
+### After EC2 Restart
+
+EC2 public IP changes on every restart. After starting the instance:
+
+```bash
+cd ~/airflow
+docker-compose up -d
+```
+
+Access Airflow UI at `http://<new-public-ip>:8080`

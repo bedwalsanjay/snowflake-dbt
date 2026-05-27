@@ -43,13 +43,9 @@ def ecs_task(task_id, dbt_command: list):
             "awsvpcConfiguration": {
                 "subnets": [ECS_SUBNET_ID],
                 "securityGroups": [ECS_SECURITY_GROUP],
-                "assignPublicIp": "ENABLED",   # needed for Fargate in public subnet
+                "assignPublicIp": "ENABLED",
             }
         },
-        awslogs_group="/ecs/dbt-snowflake",
-        awslogs_region=AWS_REGION,
-        awslogs_stream_prefix="dbt",
-        awslogs_fetch_interval_seconds=10,
     )
 
 

@@ -174,6 +174,34 @@ Uploads Airflow DAG files from the repo to S3. EC2 cron job syncs from S3 to `~/
 
 Steps to run once on the EC2 instance after launch.
 
+### EC2 IAM Role Required Permissions
+
+The IAM role attached to EC2 (`airflow-ec2-role`) must have these policies:
+
+| Policy | Why Needed |
+|---|---|
+| `AmazonS3FullAccess` | Read DAGs from S3, access source data bucket |
+| `AmazonEC2ContainerRegistryFullAccess` | Pull Docker images from ECR |
+| `AmazonECS_FullAccess` | Trigger ECS Fargate tasks from Airflow |
+| `CloudWatchLogsFullAccess` | Read dbt logs from CloudWatch |
+| Inline policy: `PassRoleForECS` | Allow Airflow to pass IAM roles to ECS tasks |
+
+Inline policy JSON (`PassRoleForECS`):
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "*"
+        }
+    ]
+}
+```
+
+To attach: IAM → Roles → `airflow-ec2-role` → Add permissions → Create inline policy → JSON tab → paste above → name it `PassRoleForECS`
+
 ### Install and Start Airflow (Docker)
 ```bash
 # SSH into EC2
@@ -261,5 +289,5 @@ Extra          : {"region_name": "ap-south-1"}
 
 ---
 
-*Last updated: 2026-05-27 — added Job 4 (deploy-dags), EC2 Airflow setup section, cron setup, Airflow Variables table*
+*Last updated: 2026-05-27 — added Job 4 (deploy-dags), EC2 IAM role permissions, EC2 Airflow setup section, cron setup, Airflow Variables table, common issues*
 *Project: snowflake-dbt retail analytics pipeline*
