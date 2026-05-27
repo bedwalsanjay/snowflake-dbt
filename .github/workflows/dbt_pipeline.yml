@@ -1,0 +1,70 @@
+name: dbt Daily Pipeline
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # runs every day at 2:00 AM UTC (7:30 AM IST)
+  workflow_dispatch:        # allows manual trigger from GitHub UI
+
+jobs:
+  dbt_pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install Python dependencies
+        run: uv sync
+        working-directory: .
+
+      - name: Create dbt profiles.yml
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << EOF
+          aws_snowflake_dbt:
+            target: dev
+            outputs:
+              dev:
+                type: snowflake
+                account: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+                user: ${{ secrets.SNOWFLAKE_USER }}
+                password: ${{ secrets.SNOWFLAKE_PASSWORD }}
+                role: ${{ secrets.SNOWFLAKE_ROLE }}
+                warehouse: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+                database: ANALYTICS
+                schema: STAGING
+                threads: 4
+                client_session_keep_alive: false
+          EOF
+
+      - name: Install dbt packages
+        run: uv run dbt deps
+        working-directory: aws_snowflake_dbt
+
+      - name: Run staging models
+        run: uv run dbt run --select staging
+        working-directory: aws_snowflake_dbt
+
+      - name: Run snapshots
+        run: uv run dbt snapshot
+        working-directory: aws_snowflake_dbt
+
+      - name: Run dimension models
+        run: uv run dbt run --select marts.dimensions
+        working-directory: aws_snowflake_dbt
+
+      - name: Run fact models
+        run: uv run dbt run --select marts.facts
+        working-directory: aws_snowflake_dbt
+
+      - name: Run dbt tests
+        run: uv run dbt test
+        working-directory: aws_snowflake_dbt
