@@ -1,0 +1,147 @@
+version: 2
+
+snapshots:
+  - name: snap_customers
+    description: SCD2 snapshot table for tracking customer attribute changes over time.
+    columns:
+      - name: customer_id
+        description: Natural key of the customer.
+        tests:
+          - not_null
+
+      - name: customer_fname
+        description: Customer first name.
+
+      - name: customer_lname
+        description: Customer last name.
+
+      - name: customer_email
+        description: Masked customer email address.
+
+      - name: customer_street
+        description: Customer street address.
+
+      - name: customer_city
+        description: Customer city.
+
+      - name: customer_state
+        description: Customer state code.
+
+      - name: customer_zipcode
+        description: Customer zipcode.
+
+      - name: dbt_scd_id
+        description: Unique dbt-generated id for each historical version.
+        tests:
+          - unique
+          - not_null
+
+      - name: dbt_updated_at
+        description: Timestamp when dbt detected or processed this version.
+
+      - name: dbt_valid_from
+        description: Start timestamp from when this version is valid.
+        tests:
+          - not_null
+
+      - name: dbt_valid_to
+        description: End timestamp until when this version is valid. Null means current active version.
+
+  - name: snap_products
+    description: SCD2 snapshot table for tracking product attribute changes over time.
+    columns:
+      - name: product_id
+        description: Natural key of the product.
+        tests:
+          - not_null
+
+      - name: product_category_id
+        description: Category id linked with the product.
+
+      - name: product_name
+        description: Product name.
+
+      - name: product_description
+        description: Product description.
+
+      - name: product_price
+        description: Product price.
+
+      - name: product_image
+        description: Product image URL.
+
+      - name: dbt_scd_id
+        description: Unique dbt-generated id for each historical version.
+        tests:
+          - unique
+          - not_null
+
+      - name: dbt_updated_at
+        description: Timestamp when dbt detected or processed this version.
+
+      - name: dbt_valid_from
+        description: Start timestamp from when this version is valid.
+        tests:
+          - not_null
+
+      - name: dbt_valid_to
+        description: End timestamp until when this version is valid. Null means current active version.
+
+  - name: snap_categories
+    description: SCD2 snapshot table for tracking category attribute changes over time.
+    columns:
+      - name: category_id
+        description: Natural key of the category.
+        tests:
+          - not_null
+
+      - name: category_department_id
+        description: Department id linked with the category.
+
+      - name: category_name
+        description: Category name.
+
+      - name: dbt_scd_id
+        description: Unique dbt-generated id for each historical version.
+        tests:
+          - unique
+          - not_null
+
+      - name: dbt_updated_at
+        description: Timestamp when dbt detected or processed this version.
+
+      - name: dbt_valid_from
+        description: Start timestamp from when this version is valid.
+        tests:
+          - not_null
+
+      - name: dbt_valid_to
+        description: End timestamp until when this version is valid. Null means current active version.
+
+  - name: snap_departments
+    description: SCD2 snapshot table for tracking department attribute changes over time.
+    columns:
+      - name: department_id
+        description: Natural key of the department.
+        tests:
+          - not_null
+
+      - name: department_name
+        description: Department name.
+
+      - name: dbt_scd_id
+        description: Unique dbt-generated id for each historical version.
+        tests:
+          - unique
+          - not_null
+
+      - name: dbt_updated_at
+        description: Timestamp when dbt detected or processed this version.
+
+      - name: dbt_valid_from
+        description: Start timestamp from when this version is valid.
+        tests:
+          - not_null
+
+      - name: dbt_valid_to
+        description: End timestamp until when this version is valid. Null means current active version.

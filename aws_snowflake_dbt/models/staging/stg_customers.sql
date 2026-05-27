@@ -8,4 +8,4 @@ SELECT
     customer_city,
     customer_state,
     customer_zipcode
-FROM {{ source('orders_src', 'CUSTOMERS') }}  limit 10
+FROM {{ source('orders_src', 'CUSTOMERS') }}

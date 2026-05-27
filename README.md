@@ -1,156 +1,277 @@
 # Snowflake dbt Retail Pipeline
 
-This repository contains a small Snowflake + dbt project that loads retail order data, models it into staging and mart tables, and demonstrates dbt snapshots for slowly changing dimensions.
+A production-grade retail analytics pipeline built on AWS S3 + Snowflake + dbt. It ingests raw retail order data, models it through staging, SCD2 snapshots, dimension, and fact layers, and produces a historically accurate star schema for BI consumption.
 
-The project is organized around a sample retail dataset with orders, order items, customers, products, categories, and departments.
+## Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          DATA SOURCES                                   │
+│                                                                         │
+│   orders.csv   order_items.csv   customers.csv   products.csv           │
+│   categories.csv   departments.csv                                      │
+└───────────────────────────────┬─────────────────────────────────────────┘
+                                │  upload manually / via script
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AWS S3 BUCKET                                    │
+│                                                                         │
+│   s3://snowflake-orders-26may/source_data/                              │
+│                                                                         │
+│   part-00000_orders.csv          part-00000-order_items.csv             │
+│   part-00000-customers.csv       part-00000-products.csv                │
+│   part-00000-categories.csv      part-00000-departments.csv             │
+└───────────────────────────────┬─────────────────────────────────────────┘
+                                │  Snowflake COPY INTO
+                                │  via external stage @snowstage
+                                │  (src/sqls/DMLs.sql)
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   SNOWFLAKE — GLUE_DATA.ORDERS (Raw)                    │
+│                                                                         │
+│   ORDERS            ORDER_ITEMS         CUSTOMERS                       │
+│   ├─ order_id       ├─ order_item_id    ├─ customer_id                  │
+│   ├─ order_date     ├─ order_id         ├─ customer_fname               │
+│   ├─ customer_id    ├─ product_id       ├─ customer_email               │
+│   └─ order_status   ├─ quantity         └─ address fields               │
+│                     ├─ subtotal                                         │
+│   PRODUCTS          └─ product_price    CATEGORIES                      │
+│   ├─ product_id                         ├─ category_id                  │
+│   ├─ category_id    DEPARTMENTS         ├─ department_id                │
+│   ├─ product_name   ├─ department_id    └─ category_name                │
+│   └─ product_price  └─ department_name                                  │
+└───────────────────────────────┬─────────────────────────────────────────┘
+                                │  dbt sources (staging.yml)
+                                │  dbt run --select staging
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│               SNOWFLAKE — ANALYTICS.STAGING (dbt tables)                │
+│                                                                         │
+│   stg_orders        stg_order_items     stg_customers                   │
+│   stg_products      stg_categories      stg_departments                 │
+│                                                                         │
+│   · Type casting (TO_TIMESTAMP on order_date)                           │
+│   · dbt tests: unique, not_null on all PKs                              │
+│   · accepted_values test on order_status                                │
+└──────────────┬────────────────────────────────────────────────────────┘
+               │                          │
+               │  dbt snapshot            │  (staging models also feed
+               ▼                          │   directly into fact_sales)
+┌──────────────────────────────┐          │
+│  ANALYTICS.SNAPSHOTS (SCD2)  │          │
+│                              │          │
+│  snap_customers              │          │
+│  snap_products               │          │
+│  snap_categories             │          │
+│  snap_departments            │          │
+│                              │          │
+│  · strategy: check           │          │
+│  · dbt_valid_from            │          │
+│  · dbt_valid_to              │          │
+│  · dbt_scd_id                │          │
+│  · dbt_updated_at            │          │
+└──────────────┬───────────────┘          │
+               │  dbt run --select        │
+               │  marts.dimensions        │
+               ▼                          │
+┌──────────────────────────────────────┐  │
+│  ANALYTICS.DIMENSIONS (dbt tables)   │  │
+│                                      │  │
+│  dim_customers   dim_products        │  │
+│  dim_categories  dim_departments     │  │
+│                                      │  │
+│  · surrogate key per SCD2 version    │  │
+│    hash(natural_key + dbt_valid_from)│  │
+│  · first version backdated to        │  │
+│    1900-01-01 for historical joins   │  │
+│  · dbt_valid_from / dbt_valid_to     │  │
+│    preserved for date-range joins    │  │
+└──────────────┬───────────────────────┘  │
+               │                          │
+               │  dbt run --select        │
+               │  marts.facts             │
+               │          ◄───────────────┘
+               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│              ANALYTICS.MARTS.FACT_SALES (incremental table)             │
+│                                                                         │
+│  GRAIN: one row per order item                                          │
+│                                                                         │
+│  IDENTIFIERS          FOREIGN KEYS (surrogate)                          │
+│  ├─ order_item_id     ├─ customer_key  → dim_customers                  │
+│  ├─ order_id          ├─ product_key   → dim_products                   │
+│  ├─ order_date        ├─ category_key  → dim_categories                 │
+│  └─ order_date_key    └─ department_key→ dim_departments                │
+│                                                                         │
+│  SCD2 JOIN LOGIC                                                        │
+│  order_date >= dim.dbt_valid_from                                       │
+│  AND order_date < COALESCE(dim.dbt_valid_to, '9999-12-31')             │
+│                                                                         │
+│  DENORMALIZED ATTRIBUTES      MEASURES                                  │
+│  ├─ customer_fname/lname      ├─ quantity                               │
+│  ├─ customer_city/state       ├─ unit_price                             │
+│  ├─ product_name              ├─ gross_sales_amount                     │
+│  ├─ category_name             ├─ net_sales_amount                       │
+│  └─ department_name           └─ discount_amount                        │
+│                                                                         │
+│  INCREMENTAL LOAD: WHERE order_date > MAX(order_date) in table          │
+└─────────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        BI / ANALYTICS                                   │
+│                                                                         │
+│  · Sales by customer, city, state                                       │
+│  · Sales by product                                                     │
+│  · Sales by category                                                    │
+│  · Sales by department                                                  │
+│  · Historical dimension changes (SCD2 accuracy)                         │
+│  · Revenue trends over time                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Project Layout
 
 ```text
 .
-|-- aws_snowflake_dbt/        # Main dbt project
-|   |-- dbt_project.yml       # dbt project configuration
-|   |-- macros/               # Custom dbt macros
-|   |-- models/
-|   |   |-- staging/          # Source-aligned staging models
-|   |   |-- marts/            # Analytics-ready mart models
-|   |   `-- demo/             # Simple demo model
-|   `-- snapshots/            # dbt snapshot definitions
-|-- sample_data/              # Local retail sample data in CSV and JSON formats
-|-- src/sqls/                 # Snowflake setup, load, and validation SQL
-|-- main.py                   # Minimal Python entrypoint
-|-- pyproject.toml            # Python project metadata and dbt dependencies
-`-- uv.lock                   # uv dependency lock file
+├── aws_snowflake_dbt/
+│   ├── dbt_project.yml
+│   ├── packages.yml                  # dbt-utils dependency
+│   ├── macros/
+│   │   └── generate_schema_name.sql  # custom schema macro
+│   ├── models/
+│   │   ├── staging/                  # source-aligned staging models
+│   │   ├── marts/
+│   │   │   ├── dimensions/           # SCD2 dimension models
+│   │   │   │   ├── dim_customers.sql
+│   │   │   │   ├── dim_products.sql
+│   │   │   │   ├── dim_categories.sql
+│   │   │   │   ├── dim_departments.sql
+│   │   │   │   └── dimensions.yml
+│   │   │   └── facts/
+│   │   │       ├── fact_sales.sql
+│   │   │       └── facts.yml
+│   │   └── demo/
+│   └── snapshots/
+│       ├── snap_customers.sql
+│       ├── snap_products.sql
+│       ├── snap_categories.sql
+│       ├── snap_departments.sql
+│       └── snapshots.yml
+├── sample_data/
+│   ├── retail_db/                    # CSV files
+│   └── retail_db_json/               # JSON-style files
+├── src/sqls/                         # Snowflake setup SQL scripts
+├── main.py
+├── pyproject.toml
+└── uv.lock
 ```
 
 ## What This Project Builds
 
-### Snowflake Source Layer
+### 1. Raw Source Layer — `GLUE_DATA.ORDERS`
 
-The raw source tables are expected in:
+Six tables loaded from S3 via Snowflake `COPY INTO`:
 
-```text
-GLUE_DATA.ORDERS
+| Table | Description |
+|---|---|
+| ORDERS | Order header — id, date, customer, status |
+| ORDER_ITEMS | Order lines — product, quantity, price, subtotal |
+| CUSTOMERS | Customer master — name, email, address |
+| PRODUCTS | Product master — name, category, price |
+| CATEGORIES | Category master — name, department |
+| DEPARTMENTS | Department master — name |
+
+### 2. Staging Layer — `ANALYTICS.STAGING`
+
+Six dbt models materialized as tables. Minimal transformation — column passthrough with type casting. Full dataset loaded (no row limits).
+
+- `stg_orders`, `stg_order_items`, `stg_customers`, `stg_products`, `stg_categories`, `stg_departments`
+
+dbt tests defined in `staging.yml`: `unique`, `not_null` on all PKs, `accepted_values` on `order_status`.
+
+### 3. SCD2 Snapshots — `ANALYTICS.SNAPSHOTS`
+
+Four snapshots using dbt's `check` strategy. Track historical changes to slowly changing dimensions.
+
+| Snapshot | Tracks changes in |
+|---|---|
+| snap_customers | name, email, full address |
+| snap_products | category, name, description, price, image |
+| snap_categories | department, name |
+| snap_departments | name |
+
+dbt automatically adds `dbt_valid_from`, `dbt_valid_to`, `dbt_scd_id`, `dbt_updated_at` to each snapshot table.
+
+### 4. Dimension Layer — `ANALYTICS.DIMENSIONS`
+
+Four dimension models built on top of snapshots. Each generates a **surrogate key** by hashing `(natural_key + dbt_valid_from)` so every historical SCD2 version gets a unique key.
+
+The first version of each record has `dbt_valid_from` backdated to `1900-01-01` so historical orders (pre-snapshot) resolve correctly on date-range joins.
+
+| Model | Surrogate Key |
+|---|---|
+| dim_customers | customer_key |
+| dim_products | product_key |
+| dim_categories | category_key |
+| dim_departments | department_key |
+
+### 5. Fact Layer — `ANALYTICS.MARTS`
+
+`fact_sales` — incremental table at **order item grain** (one row per order item).
+
+Joins all four dimensions using SCD2 date-range logic:
+
+```sql
+LEFT JOIN dim_customers c
+    ON o.order_customer_id = c.customer_id
+   AND o.order_date >= c.dbt_valid_from
+   AND o.order_date < COALESCE(c.dbt_valid_to, '9999-12-31')
 ```
 
-dbt sources are defined in `aws_snowflake_dbt/models/staging/src_orders.yml` for:
+This ensures each fact row points to the dimension version that was active **at the time of the order** — preserving historical accuracy even when dimension attributes change.
 
-- `ORDERS`
-- `ORDER_ITEMS`
-- `CUSTOMERS`
-- `PRODUCTS`
-- `CATEGORIES`
-- `DEPARTMENTS`
+Key measures: `quantity`, `unit_price`, `gross_sales_amount`, `net_sales_amount`, `discount_amount`.
 
-Setup and load scripts are stored under `src/sqls/`:
+Denormalized attributes from all dimensions are included for direct BI querying without extra joins.
 
-- `ddls.sql` creates Snowflake databases and source tables.
-- `stage_fileFormats.sql` creates a CSV file format and external S3 stage.
-- `DMLs.sql` loads CSV files from the stage into Snowflake tables.
-- `table_counts.sql` validates loaded row counts.
+### 6. Custom Macro
 
-### dbt Staging Layer
+`generate_schema_name` overrides dbt's default schema naming so models land in the exact configured schema (`STAGING`, `DIMENSIONS`, `MARTS`) rather than being prefixed with the target schema name.
 
-The staging models read from the raw Snowflake source tables and materialize as tables in:
-
-```text
-ANALYTICS.STAGING
-```
-
-Configured staging models:
-
-- `stg_orders`
-- `stg_order_items`
-- `stg_customers`
-- `stg_products`
-- `stg_categories`
-- `stg_departments`
-
-Note: the current staging models include `limit 10`, so dbt runs only process a small sample from each source table.
-
-### dbt Mart Layer
-
-The mart model `fact_order_items` materializes incrementally in:
-
-```text
-ANALYTICS.MARTS
-```
-
-It joins staged order items with staged orders and calculates:
-
-- order date keys
-- customer and product references
-- quantity and unit price
-- gross sales amount
-- net sales amount
-- discount amount
-- dbt load timestamp
-
-### dbt Snapshots
-
-Snapshot models are configured in:
-
-```text
-aws_snowflake_dbt/snapshots/
-```
-
-They write to:
-
-```text
-ANALYTICS.SNAPSHOTS
-```
-
-Configured snapshots:
-
-- `snap_categories`
-- `snap_customers`
-- `snap_departments`
-- `snap_products`
-
-Each snapshot uses dbt's `check` strategy to track changes in selected columns.
+---
 
 ## Prerequisites
 
 - Python `3.12.0` or newer
 - `uv`
-- Snowflake account, warehouse, role, database, and schema access
-- dbt Snowflake profile named `aws_snowflake_dbt`
-- Access to the S3 stage location used in `src/sqls/stage_fileFormats.sql`
+- Snowflake account with warehouse, role, and database access
+- dbt profile named `aws_snowflake_dbt` configured at `%USERPROFILE%\.dbt\profiles.yml`
+- AWS S3 bucket accessible from Snowflake (via storage integration or credentials)
 
-Python dependencies are declared in `pyproject.toml`:
+Python dependencies (`pyproject.toml`): `dbt-core`, `dbt-snowflake`
 
-- `dbt-core`
-- `dbt-snowflake`
+dbt package dependencies (`packages.yml`): `dbt-labs/dbt_utils==1.3.0`
+
+---
 
 ## Local Setup
 
-Install dependencies:
-
 ```bash
+# Install Python dependencies
 uv sync
-```
 
-Activate the virtual environment if needed:
-
-```bash
+# Activate virtual environment
 .venv\Scripts\activate
+
+# Install dbt packages
+cd aws_snowflake_dbt
+dbt deps
 ```
 
-Run the simple Python entrypoint:
+## Configure dbt Profile
 
-```bash
-uv run python main.py
-```
-
-## Configure dbt
-
-Create or update your dbt profile at:
-
-```text
-%USERPROFILE%\.dbt\profiles.yml
-```
-
-Example profile shape:
+Create `%USERPROFILE%\.dbt\profiles.yml`:
 
 ```yaml
 aws_snowflake_dbt:
@@ -171,97 +292,98 @@ aws_snowflake_dbt:
 
 Do not commit real Snowflake credentials or AWS keys.
 
-## Snowflake Setup Flow
+---
 
-Run the SQL scripts in this order from a Snowflake worksheet or SQL client:
+## Snowflake Setup
 
-1. Create databases and raw tables:
+Run SQL scripts in order from a Snowflake worksheet:
 
-   ```sql
-   -- src/sqls/ddls.sql
-   ```
+```sql
+-- 1. Create databases and raw tables
+-- src/sqls/ddls.sql
 
-2. Create the file format and S3 stage:
+-- 2. Create CSV file format and S3 external stage
+-- src/sqls/stage_fileFormats.sql
 
-   ```sql
-   -- src/sqls/stage_fileFormats.sql
-   ```
+-- 3. Load CSV files from S3
+-- src/sqls/DMLs.sql   ← replace empty AWS credential placeholders first
 
-3. Load the CSV files:
+-- 4. Validate row counts
+-- src/sqls/table_counts.sql
+```
 
-   ```sql
-   -- src/sqls/DMLs.sql
-   ```
+---
 
-4. Validate row counts:
+## Run dbt Pipeline
 
-   ```sql
-   -- src/sqls/table_counts.sql
-   ```
-
-Important notes:
-
-- `DMLs.sql` contains empty AWS credential placeholders. Replace them with a secure Snowflake storage integration or temporary credentials before loading data.
-- `DMLs.sql` loads `GLUE_DATA.ORDERS.ORDERS`, but the current `ddls.sql` file does not define the `ORDERS` table. Add that table definition before running the order load.
-
-## Run dbt
-
-From the dbt project directory:
+From `aws_snowflake_dbt/`:
 
 ```bash
-cd aws_snowflake_dbt
+# Verify connection
 dbt debug
-dbt run
-```
 
-Run snapshots:
-
-```bash
+# Full pipeline run (recommended order)
+dbt run --select staging
 dbt snapshot
-```
+dbt run --select marts.dimensions
+dbt run --select marts.facts
 
-Run tests if tests are added:
-
-```bash
+# Run all tests
 dbt test
-```
 
-Clean generated dbt artifacts:
+# Generate and serve docs
+dbt docs generate
+dbt docs serve
 
-```bash
+# Clean artifacts
 dbt clean
 ```
 
-## dbt Configuration Summary
+---
 
-The dbt project is named `aws_snowflake_dbt` and uses the profile with the same name.
+## Snowflake Schema Layout
 
-Model materializations are configured in `aws_snowflake_dbt/dbt_project.yml`:
+| Schema | Contents |
+|---|---|
+| `GLUE_DATA.ORDERS` | Raw source tables |
+| `ANALYTICS.STAGING` | dbt staging models |
+| `ANALYTICS.SNAPSHOTS` | SCD2 snapshot tables |
+| `ANALYTICS.DIMENSIONS` | Dimension models with surrogate keys |
+| `ANALYTICS.MARTS` | Fact table (`fact_sales`) |
 
-- staging models: tables in `ANALYTICS.STAGING`
-- mart models: tables in `ANALYTICS.MARTS`
+---
 
-The custom `generate_schema_name` macro returns the configured custom schema directly, instead of prefixing it with the target schema.
+## Analytics Capabilities
+
+After a full pipeline run, the star schema supports:
+
+- Sales by customer, city, state
+- Sales by product
+- Sales by category
+- Sales by department
+- Historical product category movement
+- Historical customer address changes
+- Revenue trends over time
+
+All with **historical accuracy** — fact rows always point to the dimension version active at order time.
+
+---
 
 ## Sample Data
 
-Local sample files are available in:
-
 ```text
-sample_data/retail_db/       # CSV files
-sample_data/retail_db_json/  # JSON-style files
+sample_data/retail_db/       # CSV files (used for S3 upload)
+sample_data/retail_db_json/  # JSON-style files (reference only)
 ```
 
-The Snowflake stage currently points to:
+S3 stage URL: `s3://snowflake-orders-26may/source_data/`
 
-```text
-s3://snowflake-orders-26may/source_data/
-```
+Upload CSV files to that path, or update `src/sqls/stage_fileFormats.sql` to point to your own bucket.
 
-Upload the CSV files to that S3 path, or update the stage URL to match your own bucket.
+---
 
 ## Development Notes
 
-- Generated dbt artifacts such as `target/`, `dbt_packages/`, and logs are ignored by Git.
-- `.venv/`, `.vscode/`, `logs/`, and `uv.lock` are listed in `.gitignore`.
-- The nested `aws_snowflake_dbt/README.md` is the default starter dbt README; this root README describes the actual repository workflow.
+- `target/`, `dbt_packages/`, and `logs/` are git-ignored.
+- `.venv/`, `.vscode/`, and `uv.lock` are git-ignored.
+- Do not commit `profiles.yml` or any file containing credentials.

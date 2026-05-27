@@ -5,4 +5,4 @@ SELECT
     product_description,
     product_price,
     product_image
-FROM {{ source('orders_src', 'PRODUCTS') }} limit 10
+FROM {{ source('orders_src', 'PRODUCTS') }}

@@ -5,4 +5,4 @@ SELECT
     order_item_quantity,
     order_item_subtotal,
     order_item_product_price
-FROM {{ source('orders_src', 'ORDER_ITEMS') }}  limit 10
+FROM {{ source('orders_src', 'ORDER_ITEMS') }}

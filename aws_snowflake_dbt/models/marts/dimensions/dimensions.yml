@@ -1,0 +1,148 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: SCD2 customer dimension. Each row represents one historical version of a customer record.
+    columns:
+      - name: customer_key
+        description: Surrogate key — unique per customer version (customer_id + dbt_valid_from).
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Natural key of the customer.
+        tests:
+          - not_null
+      - name: customer_fname
+        description: Customer first name.
+      - name: customer_lname
+        description: Customer last name.
+      - name: customer_email
+        description: Customer email address.
+      - name: customer_street
+        description: Customer street address.
+      - name: customer_city
+        description: Customer city.
+      - name: customer_state
+        description: Customer state.
+      - name: customer_zipcode
+        description: Customer zipcode.
+      - name: dbt_valid_from
+        description: Start of this version's validity window.
+        tests:
+          - not_null
+      - name: dbt_valid_to
+        description: End of this version's validity window. NULL means currently active.
+      - name: dbt_scd_id
+        description: Unique dbt-generated hash for this version row.
+        tests:
+          - unique
+          - not_null
+      - name: dbt_updated_at
+        description: Timestamp when dbt last processed this version.
+
+  - name: dim_products
+    description: SCD2 product dimension. Each row represents one historical version of a product record.
+    columns:
+      - name: product_key
+        description: Surrogate key — unique per product version (product_id + dbt_valid_from).
+        tests:
+          - unique
+          - not_null
+      - name: product_id
+        description: Natural key of the product.
+        tests:
+          - not_null
+      - name: category_id
+        description: Category the product belonged to during this version.
+        tests:
+          - not_null
+      - name: product_name
+        description: Product name.
+        tests:
+          - not_null
+      - name: product_description
+        description: Product description.
+      - name: product_price
+        description: Product price during this version.
+        tests:
+          - not_null
+      - name: product_image
+        description: Product image URL.
+      - name: dbt_valid_from
+        description: Start of this version's validity window.
+        tests:
+          - not_null
+      - name: dbt_valid_to
+        description: End of this version's validity window. NULL means currently active.
+      - name: dbt_scd_id
+        description: Unique dbt-generated hash for this version row.
+        tests:
+          - unique
+          - not_null
+      - name: dbt_updated_at
+        description: Timestamp when dbt last processed this version.
+
+  - name: dim_categories
+    description: SCD2 category dimension. Each row represents one historical version of a category record.
+    columns:
+      - name: category_key
+        description: Surrogate key — unique per category version (category_id + dbt_valid_from).
+        tests:
+          - unique
+          - not_null
+      - name: category_id
+        description: Natural key of the category.
+        tests:
+          - not_null
+      - name: department_id
+        description: Department the category belonged to during this version.
+        tests:
+          - not_null
+      - name: category_name
+        description: Category name.
+        tests:
+          - not_null
+      - name: dbt_valid_from
+        description: Start of this version's validity window.
+        tests:
+          - not_null
+      - name: dbt_valid_to
+        description: End of this version's validity window. NULL means currently active.
+      - name: dbt_scd_id
+        description: Unique dbt-generated hash for this version row.
+        tests:
+          - unique
+          - not_null
+      - name: dbt_updated_at
+        description: Timestamp when dbt last processed this version.
+
+  - name: dim_departments
+    description: SCD2 department dimension. Each row represents one historical version of a department record.
+    columns:
+      - name: department_key
+        description: Surrogate key — unique per department version (department_id + dbt_valid_from).
+        tests:
+          - unique
+          - not_null
+      - name: department_id
+        description: Natural key of the department.
+        tests:
+          - not_null
+      - name: department_name
+        description: Department name.
+        tests:
+          - not_null
+      - name: dbt_valid_from
+        description: Start of this version's validity window.
+        tests:
+          - not_null
+      - name: dbt_valid_to
+        description: End of this version's validity window. NULL means currently active.
+      - name: dbt_scd_id
+        description: Unique dbt-generated hash for this version row.
+        tests:
+          - unique
+          - not_null
+      - name: dbt_updated_at
+        description: Timestamp when dbt last processed this version.

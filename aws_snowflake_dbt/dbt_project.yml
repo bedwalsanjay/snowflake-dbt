@@ -40,5 +40,13 @@ models:
       +materialized: table
       +database: ANALYTICS
       +schema: MARTS
+      dimensions:
+        +materialized: table
+        +database: ANALYTICS
+        +schema: DIMENSIONS
+      facts:
+        +materialized: incremental
+        +database: ANALYTICS
+        +schema: MARTS
 
 

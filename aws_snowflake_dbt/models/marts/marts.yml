@@ -1,0 +1,3 @@
+version: 2
+# Dimension model docs are in models/marts/dimensions/dimensions.yml
+# Fact model docs are in models/marts/facts/facts.yml

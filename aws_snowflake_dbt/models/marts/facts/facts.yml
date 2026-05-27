@@ -1,0 +1,118 @@
+version: 2
+
+models:
+  - name: fact_sales
+    description: >
+      Incremental sales fact table at order item grain.
+      Joins to all SCD2 dimensions using date-range logic to ensure
+      historical accuracy — each fact row points to the dimension version
+      that was active at the time of the order.
+    columns:
+      - name: order_item_id
+        description: Grain of the fact table. One row per order item.
+        tests:
+          - unique
+          - not_null
+
+      - name: order_id
+        description: Order the item belongs to.
+        tests:
+          - not_null
+
+      - name: order_date
+        description: Timestamp when the order was placed.
+        tests:
+          - not_null
+
+      - name: order_date_key
+        description: Date portion of order_date. Used for joining a date dimension.
+        tests:
+          - not_null
+
+      - name: order_status
+        description: Status of the order at load time.
+        tests:
+          - not_null
+
+      - name: customer_key
+        description: Surrogate key to dim_customers (SCD2 version active at order_date).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_key
+
+      - name: product_key
+        description: Surrogate key to dim_products (SCD2 version active at order_date).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_products')
+              field: product_key
+
+      - name: category_key
+        description: Surrogate key to dim_categories (SCD2 version active at order_date).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_categories')
+              field: category_key
+
+      - name: department_key
+        description: Surrogate key to dim_departments (SCD2 version active at order_date).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_departments')
+              field: department_key
+
+      - name: customer_id
+        description: Natural key of the customer (for lineage/debugging).
+      - name: product_id
+        description: Natural key of the product (for lineage/debugging).
+      - name: category_id
+        description: Natural key of the category (for lineage/debugging).
+      - name: department_id
+        description: Natural key of the department (for lineage/debugging).
+
+      - name: customer_fname
+        description: Customer first name at time of order.
+      - name: customer_lname
+        description: Customer last name at time of order.
+      - name: customer_city
+        description: Customer city at time of order.
+      - name: customer_state
+        description: Customer state at time of order.
+      - name: customer_zipcode
+        description: Customer zipcode at time of order.
+
+      - name: product_name
+        description: Product name at time of order.
+      - name: current_product_price
+        description: Product price from the dimension version active at order_date.
+      - name: category_name
+        description: Category name at time of order.
+      - name: department_name
+        description: Department name at time of order.
+
+      - name: quantity
+        description: Quantity of product purchased.
+        tests:
+          - not_null
+      - name: unit_price
+        description: Actual unit price charged on the order item.
+        tests:
+          - not_null
+      - name: gross_sales_amount
+        description: quantity * unit_price.
+        tests:
+          - not_null
+      - name: net_sales_amount
+        description: Actual order item subtotal after discounts.
+        tests:
+          - not_null
+      - name: discount_amount
+        description: gross_sales_amount - net_sales_amount.
+
+      - name: dbt_loaded_at
+        description: Timestamp when dbt loaded this row.

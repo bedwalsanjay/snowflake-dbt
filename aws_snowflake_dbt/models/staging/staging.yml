@@ -1,0 +1,155 @@
+version: 2
+
+sources:
+  - name: orders_src
+    database: GLUE_DATA
+    schema: ORDERS
+    tables:
+      - name: ORDERS
+      - name: ORDER_ITEMS
+      - name: CUSTOMERS
+      - name: PRODUCTS
+      - name: CATEGORIES
+      - name: DEPARTMENTS
+
+models:
+  - name: stg_orders
+    description: Cleaned staging table for customer orders.
+    columns:
+      - name: order_id
+        description: Unique order id.
+        tests:
+          - unique
+          - not_null
+      - name: order_date
+        description: Timestamp when order was placed.
+        tests:
+          - not_null
+      - name: order_customer_id
+        description: Customer id linked with order.
+        tests:
+          - not_null
+      - name: order_status
+        description: Current order status.
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - CLOSED
+                - COMPLETE
+                - PENDING_PAYMENT
+                - PROCESSING
+                - PENDING
+                - ON_HOLD
+                - CANCELED
+                - SUSPECTED_FRAUD
+                - PAYMENT_REVIEW
+
+  - name: stg_order_items
+    description: Cleaned staging table for order line items.
+    columns:
+      - name: order_item_id
+        description: Unique order item id.
+        tests:
+          - unique
+          - not_null
+      - name: order_item_order_id
+        description: Order id for this order item.
+        tests:
+          - not_null
+      - name: order_item_product_id
+        description: Product id purchased in this order item.
+        tests:
+          - not_null
+      - name: order_item_quantity
+        description: Quantity purchased.
+        tests:
+          - not_null
+      - name: order_item_subtotal
+        description: Total amount for this order line.
+        tests:
+          - not_null
+      - name: order_item_product_price
+        description: Unit price of the product.
+        tests:
+          - not_null
+
+  - name: stg_customers
+    description: Cleaned staging table for customers.
+    columns:
+      - name: customer_id
+        description: Unique customer id.
+        tests:
+          - unique
+          - not_null
+      - name: customer_fname
+        description: Customer first name.
+      - name: customer_lname
+        description: Customer last name.
+      - name: customer_email
+        description: Customer email address.
+      - name: customer_password
+        description: Masked customer password.
+      - name: customer_street
+        description: Customer street address.
+      - name: customer_city
+        description: Customer city.
+      - name: customer_state
+        description: Customer state.
+      - name: customer_zipcode
+        description: Customer zipcode.
+
+  - name: stg_products
+    description: Cleaned staging table for products.
+    columns:
+      - name: product_id
+        description: Unique product id.
+        tests:
+          - unique
+          - not_null
+      - name: product_category_id
+        description: Category id of product.
+        tests:
+          - not_null
+      - name: product_name
+        description: Product name.
+        tests:
+          - not_null
+      - name: product_description
+        description: Product description.
+      - name: product_price
+        description: Product unit price.
+        tests:
+          - not_null
+      - name: product_image
+        description: Product image URL.
+
+  - name: stg_categories
+    description: Cleaned staging table for product categories.
+    columns:
+      - name: category_id
+        description: Unique category id.
+        tests:
+          - unique
+          - not_null
+      - name: category_department_id
+        description: Department id linked with category.
+        tests:
+          - not_null
+      - name: category_name
+        description: Category name.
+        tests:
+          - not_null
+
+  - name: stg_departments
+    description: Cleaned staging table for departments.
+    columns:
+      - name: department_id
+        description: Unique department id.
+        tests:
+          - unique
+          - not_null
+      - name: department_name
+        description: Department name.
+        tests:
+          - not_null
